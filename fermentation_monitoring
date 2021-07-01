@@ -1,0 +1,145 @@
+// Libraries
+#include "MQ135.h"
+#include "WiFi.h"
+#include <HTTPClient.h>
+#include "time.h"
+
+// Pins
+#define LED 2
+#define PIN 39
+
+
+// Sleeps
+#define uS_TO_S_FACTOR 1000000  // Conversion factor for micro seconds to seconds
+#define TIME_TO_SLEEP  600        // Sleep time ESP32 (seconds)
+RTC_DATA_ATTR int bootCount = 1;
+
+// WiFi Connection
+const char* ssid = "MANDI_Ext";
+const char* password =  "11011976";
+
+// IFTTT Webhook
+const char* serverURL = "https://maker.ifttt.com/trigger/co2_readings/with/key/fqUcX7qCK_HPv1TmXRMj1ZZypBynHDUXrsH9oTYUv9o";
+
+
+// Variables  for date & time
+const char* ntpServer = "pool.ntp.org";
+const int   daylightOffset_sec = 21600;
+const long  gmtOffset_sec = 3600;
+
+// Returns Date
+String printLocalDate()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain date");
+    return "Failed to obtain Date";
+  }
+
+  char timeStringBuff[28];
+  strftime(timeStringBuff, sizeof(timeStringBuff), "%B %d", &timeinfo);
+  
+  return timeStringBuff;  
+}
+
+// Returns Hour:Minute
+String printLocalHour()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return "Failed to obtain time";
+  }
+
+  char timeStringBuff[28];
+  strftime(timeStringBuff, sizeof(timeStringBuff), "%H:%M", &timeinfo);
+  
+  return timeStringBuff;  
+}
+
+void blinkLED(){
+  digitalWrite(LED,HIGH);
+  delay(1000);
+  digitalWrite(LED,LOW);
+}
+
+MQ135 gasSensor = MQ135(PIN); // Sensor Object
+
+
+// ------------------------ SETUP ------------------------ //
+void setup() {
+  // Set pin mode
+  Serial.begin(9600);
+  Serial.println ("");
+
+  
+  pinMode(LED,OUTPUT);
+  pinMode(PIN, INPUT);
+
+  blinkLED();
+  
+  // Establish WiFi Connection
+  WiFi.begin(ssid, password);
+  int tryCount = 1;
+  while (WiFi.status() != WL_CONNECTED) {
+    
+    delay(500);
+    Serial.println("Connecting to WiFi.." + String(tryCount));
+    tryCount++;
+
+    if(tryCount > 20){
+      WiFi.disconnect();
+      Serial.println("Passed 20 connection attempt. Restarting...");
+
+      ESP.restart();
+    }
+  }
+ 
+  Serial.println("Connected to the WiFi network");
+
+  // Get time
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+}
+
+
+void loop() {
+  float ppm = gasSensor.getPPM();
+  Serial.print ("ppm: ");
+  Serial.println (ppm);
+  
+  String date = {printLocalDate()};
+  Serial.println (date);
+  
+  String hour = {printLocalHour()};
+  Serial.println (hour);  
+    
+  if(WiFi.status() == WL_CONNECTED){
+    HTTPClient http;
+  
+    http.begin(serverURL);
+    http.addHeader("Content-Type", "application/json");
+  
+    String httpRequestData = String("{\"value1\":\"") + (date) + "\",\"value2\":\"" + (hour) + "\",\"value3\":\"" + ppm + "\"}";
+    int httpResponseCode = http.POST(httpRequestData);
+
+    Serial.println(httpResponseCode);
+
+    while(httpResponseCode != 200){
+      httpResponseCode = http.POST(httpRequestData);
+      Serial.println(httpResponseCode);
+    }
+  }
+  else{
+    Serial.println("No WiFi connection...");
+    WiFi.disconnect();
+    Serial.println("Restarting");
+
+    ESP.restart();
+  }
+  
+  Serial.println ("Sleeping for 10 minutes");
+  blinkLED();
+
+  WiFi.disconnect();
+  esp_deep_sleep(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+}
